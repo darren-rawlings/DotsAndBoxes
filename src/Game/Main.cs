@@ -1,5 +1,5 @@
-using GameTemplate.Core;
-using GameTemplate.Game.Ui;
+using DotsAndBoxes.Core;
+using DotsAndBoxes.Game.Ui;
 using Godot;
 using Renegade.Ads;
 using Renegade.Audio;
@@ -7,7 +7,7 @@ using Renegade.Core;
 using Renegade.Core.Synth;
 using Renegade.Dev;
 
-namespace GameTemplate.Game;
+namespace DotsAndBoxes.Game;
 
 /// <summary>
 /// Starting point for a new game: a lit 3D table, a HUD, sound, ads and developer flags, all
@@ -16,7 +16,7 @@ namespace GameTemplate.Game;
 /// </summary>
 public partial class Main : Node3D
 {
-	public const string Title = "Game Template";
+	public const string Title = "Dots and Boxes";
 
 	/// <summary>
 	/// Google's test ad units until the game's real ones exist in AdMob (see the release playbook
@@ -43,7 +43,7 @@ public partial class Main : Node3D
 
 	public override void _Ready()
 	{
-		DevLog.Tag = "gt";
+		DevLog.Tag = "dot";
 		_settings = Settings.Load();
 		ReadDeveloperArgs();
 		AudioServer.SetBusMute(0, _settings.Muted);

@@ -1,6 +1,6 @@
 using Godot;
 
-namespace GameTemplate.Game;
+namespace DotsAndBoxes.Game;
 
 /// <summary>Player preferences, saved on the device only (the privacy policy promises nothing leaves it).</summary>
 public sealed class Settings

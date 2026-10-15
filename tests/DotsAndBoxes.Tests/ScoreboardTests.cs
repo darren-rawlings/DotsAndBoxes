@@ -1,7 +1,7 @@
-using GameTemplate.Core;
+using DotsAndBoxes.Core;
 using Xunit;
 
-namespace GameTemplate.Tests;
+namespace DotsAndBoxes.Tests;
 
 public class ScoreboardTests
 {
