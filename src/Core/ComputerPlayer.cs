@@ -20,7 +20,7 @@ public sealed class ComputerPlayer
 	public const int ExactLines = 18;
 
 	private readonly Random _random;
-	private readonly Dictionary<ulong, int> _memo = new();
+	private readonly Dictionary<UInt128, int> _memo = new();
 
 	public Difficulty Difficulty { get; }
 
@@ -32,16 +32,16 @@ public sealed class ComputerPlayer
 
 	public int ChooseLine(DotsGame game)
 	{
-		ulong drawn = game.Drawn;
+		var drawn = game.Drawn;
 		var open = game.OpenLines().ToList();
 		if (open.Count == 0)
 			throw new InvalidOperationException("No lines left.");
 
 		if (Difficulty == Difficulty.Hard && open.Count <= ExactLines)
-			return BestExact(drawn, open);
+			return BestExact(game, drawn, open);
 
 		// Take a box whenever one is there.
-		var closing = open.Where(line => Closes(drawn, line) > 0).ToList();
+		var closing = open.Where(line => Closes(game, drawn, line) > 0).ToList();
 		if (closing.Count > 0)
 			return closing[_random.Next(closing.Count)];
 
@@ -49,39 +49,39 @@ public sealed class ComputerPlayer
 			return open[_random.Next(open.Count)];
 
 		// Safe lines don't give the opponent a box.
-		var safe = open.Where(line => !GivesBox(drawn, line)).ToList();
+		var safe = open.Where(line => !GivesBox(game, drawn, line)).ToList();
 		if (safe.Count > 0)
 			return safe[_random.Next(safe.Count)];
 
 		// Everything gives something away: give as little as possible.
-		return open.OrderBy(line => GiftSize(drawn, line)).ThenBy(_ => _random.Next()).First();
+		return open.OrderBy(line => GiftSize(game, drawn, line)).ThenBy(_ => _random.Next()).First();
 	}
 
 	/// <summary>Boxes a line would close right now.</summary>
-	private static int Closes(ulong drawn, int line)
+	private static int Closes(DotsGame game, UInt128 drawn, int line)
 	{
-		ulong after = drawn | (1UL << line);
-		return DotsGame.LineBoxes[line].Count(box => (after & DotsGame.BoxEdges[box]) == DotsGame.BoxEdges[box]);
+		var after = drawn | DotsGame.Bit(line);
+		return game.LineBoxes[line].Count(box => (after & game.BoxEdges[box]) == game.BoxEdges[box]);
 	}
 
 	/// <summary>True if drawing the line leaves a box with three sides for the opponent.</summary>
-	private static bool GivesBox(ulong drawn, int line) =>
-		DotsGame.LineBoxes[line].Any(box => DotsGame.Sides(drawn, box) == 2);
+	private static bool GivesBox(DotsGame game, UInt128 drawn, int line) =>
+		game.LineBoxes[line].Any(box => game.Sides(drawn, box) == 2);
 
 	/// <summary>How many boxes the opponent could then take in a row (the chain this line opens).</summary>
-	private static int GiftSize(ulong drawn, int line)
+	private static int GiftSize(DotsGame game, UInt128 drawn, int line)
 	{
-		ulong state = drawn | (1UL << line);
+		var state = drawn | DotsGame.Bit(line);
 		int taken = 0;
 		while (true)
 		{
 			int next = -1;
-			ulong open = ~state & DotsGame.AllLines;
+			var open = ~state & game.AllLines;
 			while (open != 0)
 			{
-				int candidate = BitOperations.TrailingZeroCount(open);
+				int candidate = (int)UInt128.TrailingZeroCount(open);
 				open &= open - 1;
-				if (Closes(state, candidate) > 0)
+				if (Closes(game, state, candidate) > 0)
 				{
 					next = candidate;
 					break;
@@ -89,22 +89,22 @@ public sealed class ComputerPlayer
 			}
 			if (next < 0)
 				return taken;
-			taken += Closes(state, next);
-			state |= 1UL << next;
+			taken += Closes(game, state, next);
+			state |= DotsGame.Bit(next);
 		}
 	}
 
-	private int BestExact(ulong drawn, List<int> open)
+	private int BestExact(DotsGame game, UInt128 drawn, List<int> open)
 	{
 		_memo.Clear();
 		int best = int.MinValue;
 		var bestLines = new List<int>();
 		foreach (int line in open)
 		{
-			int gained = Closes(drawn, line);
-			ulong after = drawn | (1UL << line);
+			int gained = Closes(game, drawn, line);
+			var after = drawn | DotsGame.Bit(line);
 			// Closing a box keeps the turn; otherwise the opponent's best result counts against us.
-			int value = gained > 0 ? gained + Solve(after) : -Solve(after);
+			int value = gained > 0 ? gained + Solve(game, after) : -Solve(game, after);
 			if (value > best)
 			{
 				best = value;
@@ -120,21 +120,21 @@ public sealed class ComputerPlayer
 	/// The best box margin the side to move can still get from this position. It depends only on
 	/// which lines are drawn, not on the score so far, so it's memoised per line mask.
 	/// </summary>
-	private int Solve(ulong drawn)
+	private int Solve(DotsGame game, UInt128 drawn)
 	{
-		if (drawn == DotsGame.AllLines)
+		if (drawn == game.AllLines)
 			return 0;
 		if (_memo.TryGetValue(drawn, out int known))
 			return known;
 		int best = int.MinValue;
-		ulong open = ~drawn & DotsGame.AllLines;
+		var open = ~drawn & game.AllLines;
 		while (open != 0)
 		{
-			int line = BitOperations.TrailingZeroCount(open);
+			int line = (int)UInt128.TrailingZeroCount(open);
 			open &= open - 1;
-			int gained = Closes(drawn, line);
-			ulong after = drawn | (1UL << line);
-			int value = gained > 0 ? gained + Solve(after) : -Solve(after);
+			int gained = Closes(game, drawn, line);
+			var after = drawn | DotsGame.Bit(line);
+			int value = gained > 0 ? gained + Solve(game, after) : -Solve(game, after);
 			best = Math.Max(best, value);
 		}
 		_memo[drawn] = best;

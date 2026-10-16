@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Numerics;
 
 namespace DotsAndBoxes.Core;
 
@@ -15,54 +14,101 @@ public enum Player
 public sealed record LineResult(Player Drawer, int Line, IReadOnlyList<int> Boxes, bool GoesAgain, bool GameOver);
 
 /// <summary>
-/// Dots and Boxes on a grid of <see cref="Rows"/> × <see cref="Columns"/> boxes. Lines are bits in
-/// a 64-bit mask: first the horizontal lines, row by row ((rows + 1) × columns of them), then the
-/// vertical ones ((columns + 1) per row). Closing a box scores it and earns another turn; when every
-/// line is drawn, the most boxes wins.
+/// Dots and Boxes on a square grid of <see cref="Size"/> × <see cref="Size"/> boxes (3 to 7).
+/// Lines are bits in a 128-bit mask: first the horizontal lines, row by row ((size + 1) × size of
+/// them), then the vertical ones ((size + 1) per row). Closing a box scores it and earns another
+/// turn; when every line is drawn, the most boxes wins.
 /// </summary>
 public sealed class DotsGame
 {
-	public const int Rows = 5;
-	public const int Columns = 5;
-	public const int Horizontal = (Rows + 1) * Columns;
-	public const int Lines = Horizontal + Rows * (Columns + 1);
-	public const int Boxes = Rows * Columns;
+	public const int MinSize = 3;
+	public const int MaxSize = 7;
 
-	/// <summary>The four lines round each box, precomputed.</summary>
-	public static readonly ulong[] BoxEdges = BuildEdges();
-
-	/// <summary>The one or two boxes beside each line.</summary>
-	public static readonly int[][] LineBoxes = BuildLineBoxes();
-
-	private readonly Player?[] _owners = new Player?[Boxes];
-	private readonly Stack<(ulong Drawn, Player Turn, int[] Scores, int[] Claimed)> _history = new();
+	private readonly Player?[] _owners;
+	private readonly Stack<(UInt128 Drawn, Player Turn, int[] Scores, int[] Claimed, int Line)> _history = new();
+	private readonly Player?[] _drawers;
 	private readonly int[] _scores = new int[2];
 
-	public ulong Drawn { get; private set; }
-	public Player Turn { get; private set; }
-
-	public DotsGame() => Reset();
+	public DotsGame(int size = 5)
+	{
+		if (size < MinSize || size > MaxSize)
+			throw new ArgumentOutOfRangeException(nameof(size));
+		Size = size;
+		Horizontal = (size + 1) * size;
+		Lines = Horizontal * 2;
+		Boxes = size * size;
+		AllLines = (UInt128.One << Lines) - 1;
+		BoxEdges = new UInt128[Boxes];
+		for (int row = 0; row < size; row++)
+		{
+			for (int column = 0; column < size; column++)
+			{
+				BoxEdges[row * size + column] =
+					Bit(HorizontalLine(row, column)) | Bit(HorizontalLine(row + 1, column)) |
+					Bit(VerticalLine(row, column)) | Bit(VerticalLine(row, column + 1));
+			}
+		}
+		var lineBoxes = new List<int>[Lines];
+		for (int line = 0; line < Lines; line++)
+			lineBoxes[line] = new List<int>();
+		for (int box = 0; box < Boxes; box++)
+		{
+			for (int line = 0; line < Lines; line++)
+			{
+				if ((BoxEdges[box] & Bit(line)) != 0)
+					lineBoxes[line].Add(box);
+			}
+		}
+		LineBoxes = Array.ConvertAll(lineBoxes, list => list.ToArray());
+		_owners = new Player?[Boxes];
+		_drawers = new Player?[Lines];
+		Reset();
+	}
 
 	private DotsGame(DotsGame other)
 	{
+		Size = other.Size;
+		Horizontal = other.Horizontal;
+		Lines = other.Lines;
+		Boxes = other.Boxes;
+		AllLines = other.AllLines;
+		BoxEdges = other.BoxEdges;
+		LineBoxes = other.LineBoxes;
+		_owners = (Player?[])other._owners.Clone();
+		_drawers = (Player?[])other._drawers.Clone();
 		Drawn = other.Drawn;
 		Turn = other.Turn;
-		Array.Copy(other._owners, _owners, Boxes);
 		Array.Copy(other._scores, _scores, 2);
 	}
 
 	public DotsGame Clone() => new(this);
+
+	public int Size { get; }
+	public int Horizontal { get; }
+	public int Lines { get; }
+	public int Boxes { get; }
+	public UInt128 AllLines { get; }
+
+	/// <summary>The four lines round each box.</summary>
+	public UInt128[] BoxEdges { get; }
+
+	/// <summary>The one or two boxes beside each line.</summary>
+	public int[][] LineBoxes { get; }
+
+	public UInt128 Drawn { get; private set; }
+	public Player Turn { get; private set; }
+
+	public static UInt128 Bit(int line) => UInt128.One << line;
 
 	public void Reset()
 	{
 		Drawn = 0;
 		Turn = Player.First;
 		Array.Clear(_owners);
+		Array.Clear(_drawers);
 		Array.Clear(_scores);
 		_history.Clear();
 	}
-
-	public static ulong AllLines => (1UL << Lines) - 1;
 
 	public bool IsOver => Drawn == AllLines;
 
@@ -74,7 +120,10 @@ public sealed class DotsGame
 
 	public Player? Owner(int box) => _owners[box];
 
-	public bool IsDrawn(int line) => (Drawn & (1UL << line)) != 0;
+	/// <summary>Who drew a line, if it's drawn.</summary>
+	public Player? DrewLine(int line) => _drawers[line];
+
+	public bool IsDrawn(int line) => (Drawn & Bit(line)) != 0;
 
 	public static Player Opponent(Player player) => player == Player.First ? Player.Second : Player.First;
 
@@ -82,10 +131,10 @@ public sealed class DotsGame
 
 	public IEnumerable<int> OpenLines()
 	{
-		ulong open = ~Drawn & AllLines;
+		var open = ~Drawn & AllLines;
 		while (open != 0)
 		{
-			yield return BitOperations.TrailingZeroCount(open);
+			yield return (int)UInt128.TrailingZeroCount(open);
 			open &= open - 1;
 		}
 	}
@@ -95,9 +144,10 @@ public sealed class DotsGame
 		if (line < 0 || line >= Lines || IsDrawn(line))
 			throw new InvalidOperationException($"Line {line} can't be drawn.");
 		var claimed = new List<int>();
-		_history.Push((Drawn, Turn, (int[])_scores.Clone(), Array.Empty<int>()));
+		var before = (Drawn, Turn, (int[])_scores.Clone());
 		var drawer = Turn;
-		Drawn |= 1UL << line;
+		Drawn |= Bit(line);
+		_drawers[line] = drawer;
 		foreach (int box in LineBoxes[line])
 		{
 			if ((Drawn & BoxEdges[box]) == BoxEdges[box])
@@ -107,9 +157,7 @@ public sealed class DotsGame
 				claimed.Add(box);
 			}
 		}
-		// Remember which boxes this line claimed, so undo can give them back.
-		var top = _history.Pop();
-		_history.Push((top.Drawn, top.Turn, top.Scores, claimed.ToArray()));
+		_history.Push((before.Drawn, before.Turn, before.Item3, claimed.ToArray(), line));
 		bool again = claimed.Count > 0 && !IsOver;
 		if (claimed.Count == 0)
 			Turn = Opponent(drawer);
@@ -120,7 +168,8 @@ public sealed class DotsGame
 	{
 		if (_history.Count == 0)
 			return false;
-		var (drawn, turn, scores, claimed) = _history.Pop();
+		var (drawn, turn, scores, claimed, line) = _history.Pop();
+		_drawers[line] = null;
 		Drawn = drawn;
 		Turn = turn;
 		Array.Copy(scores, _scores, 2);
@@ -130,47 +179,13 @@ public sealed class DotsGame
 	}
 
 	/// <summary>How many of a box's four sides are drawn in a line mask.</summary>
-	public static int Sides(ulong drawn, int box) => BitOperations.PopCount(drawn & BoxEdges[box]);
+	public int Sides(UInt128 drawn, int box) => (int)UInt128.PopCount(drawn & BoxEdges[box]);
 
-	// ---------------------------------------------------------------- Geometry
+	/// <summary>The horizontal line above box row <paramref name="row"/> (0..Size), column <paramref name="column"/>.</summary>
+	public int HorizontalLine(int row, int column) => row * Size + column;
 
-	/// <summary>The horizontal line above box row <paramref name="row"/> (0..Rows), column <paramref name="column"/>.</summary>
-	public static int HorizontalLine(int row, int column) => row * Columns + column;
+	/// <summary>The vertical line left of box column <paramref name="column"/> (0..Size), in row <paramref name="row"/>.</summary>
+	public int VerticalLine(int row, int column) => Horizontal + row * (Size + 1) + column;
 
-	/// <summary>The vertical line left of box column <paramref name="column"/> (0..Columns), in row <paramref name="row"/>.</summary>
-	public static int VerticalLine(int row, int column) => Horizontal + row * (Columns + 1) + column;
-
-	public static bool IsHorizontal(int line) => line < Horizontal;
-
-	private static ulong[] BuildEdges()
-	{
-		var edges = new ulong[Boxes];
-		for (int row = 0; row < Rows; row++)
-		{
-			for (int column = 0; column < Columns; column++)
-			{
-				edges[row * Columns + column] =
-					(1UL << HorizontalLine(row, column)) | (1UL << HorizontalLine(row + 1, column)) |
-					(1UL << VerticalLine(row, column)) | (1UL << VerticalLine(row, column + 1));
-			}
-		}
-		return edges;
-	}
-
-	private static int[][] BuildLineBoxes()
-	{
-		var boxes = new List<int>[Lines];
-		for (int line = 0; line < Lines; line++)
-			boxes[line] = new List<int>();
-		var edges = BuildEdges();
-		for (int box = 0; box < Boxes; box++)
-		{
-			for (int line = 0; line < Lines; line++)
-			{
-				if ((edges[box] & (1UL << line)) != 0)
-					boxes[line].Add(box);
-			}
-		}
-		return Array.ConvertAll(boxes, list => list.ToArray());
-	}
+	public bool IsHorizontal(int line) => line < Horizontal;
 }

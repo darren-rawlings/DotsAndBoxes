@@ -16,8 +16,8 @@ namespace DotsAndBoxes.Game;
 /// <summary>
 /// Dots and Boxes. Tap between two pegs and a stick drops into place in your colour. Close a box and
 /// a glowing tile in your colour springs up into it with sparks (the signature "box pop"); a chain
-/// of boxes pops one after another, each note a little higher, and you go again. Drag sideways to
-/// spin the board.
+/// of boxes pops one after another, each note a little higher, and you go again. When the game ends
+/// the winner's boxes catch fire. The board is 3×3 to 7×7 boxes (Settings). Drag sideways to spin.
 /// </summary>
 public partial class Main : Node3D
 {
@@ -27,18 +27,22 @@ public partial class Main : Node3D
 	private static readonly AdMobConfig AdUnits = AdMobConfig.Test;
 
 	private const Player Human = Player.First;
-	private const float Cell = 1.5f;
-	private const float GridHalf = DotsGame.Columns * Cell / 2f;
-	private const float Half = GridHalf + 0.6f;
+
+	/// <summary>The grid always spans the same width; bigger boards have smaller boxes.</summary>
+	private const float GridSpan = 7.5f;
 	private const float Thickness = 0.4f;
 
-	private readonly DotsGame _game = new();
+	private static readonly int[] Sizes = { 3, 4, 5, 6, 7 };
+
 	private readonly Scoreboard _wins = new();
-	private readonly MeshInstance3D?[] _sticks = new MeshInstance3D?[DotsGame.Lines];
-	private readonly MeshInstance3D?[] _tiles = new MeshInstance3D?[DotsGame.Boxes];
 	private readonly ImpactBank<Style> _impacts = new(Styles.Impact);
 	private readonly ComputerTurn _computer = new();
+	private readonly List<Node3D> _pegs = new();
+	private readonly List<Flames> _fires = new();
 
+	private DotsGame _game = new();
+	private MeshInstance3D?[] _sticks = System.Array.Empty<MeshInstance3D?>();
+	private MeshInstance3D?[] _tiles = System.Array.Empty<MeshInstance3D?>();
 	private GameSettings _settings = null!;
 	private Node3D _rig = null!;
 	private Camera3D _camera = null!;
@@ -51,10 +55,15 @@ public partial class Main : Node3D
 	private bool _busy;
 	private bool _roundCounted;
 	private int _chain;
+	private int _size = 5;
+	private int? _pendingSize;
 
 	private bool _demo;
 	private bool _quitAfterDemo;
 	private float _initialSpin;
+	private string? _clip;
+
+	private float Cell => GridSpan / _size;
 
 	private bool VsComputer => _settings.Mode == GameMode.PlayerVsComputer || _demo;
 
@@ -67,6 +76,8 @@ public partial class Main : Node3D
 		DevLog.Tag = "dab";
 		AudioWatch.Attach(this, Title);
 		_settings = GameSettings.Load(board: Style.Wood, pieces: Style.Glass);
+		if (_settings.Extra.TryGetValue("size", out var saved) && int.TryParse(saved, out int size) && Sizes.Contains(size))
+			_size = size;
 		ReadDeveloperArgs();
 		AudioServer.SetBusMute(0, _settings.Muted);
 		BuildWorld();
@@ -86,16 +97,12 @@ public partial class Main : Node3D
 		_hud = new GameHud(theme);
 		AddChild(_hud);
 		_hud.Build(new HudOptions(Title, "Tap between two pegs  ·  Drag sideways to spin", PiecesLabel: "Colours",
-			PieceName: s => $"{Styles.Pieces(s).NameOne} & {Styles.Pieces(s).NameTwo}"),
-			_settings.Muted, _settings.Mode, _settings.Difficulty, _settings.Board, _settings.Pieces);
+			PieceName: s => $"{Styles.Pieces(s).NameOne} & {Styles.Pieces(s).NameTwo}"), _settings);
+		_hud.AddChoice("Board size (boxes)", Sizes.Select(s => $"{s}×{s}").ToArray(), System.Array.IndexOf(Sizes, _size), i => ChooseSize(Sizes[i]));
 		_hud.NewGamePressed += OnNewGamePressed;
 		_hud.UndoPressed += OnUndoPressed;
-		_hud.MuteToggled += muted =>
-		{
-			_settings.Muted = muted;
-			AudioServer.SetBusMute(0, muted);
-			_settings.Save();
-		};
+		_hud.RestartPressed += OnRestartPressed;
+		_hud.SetTutorial(Tutorial.Pages);
 		_hud.ModeChosen += (mode, difficulty) =>
 		{
 			_settings.Mode = mode;
@@ -117,28 +124,37 @@ public partial class Main : Node3D
 			Rebuild(animate: false);
 		};
 
-		_spin = new SpinControl(_rig, () => !_busy);
+		_spin = new SpinControl(_rig, () => !_busy && !_settings.FreezeBoard);
 		_spin.Tapped += OnTapped;
+		if (_clip != null)
+		{
+			_hud.Visible = false;
+			_ = PlayClip(_clip);
+			return;
+		}
 		_ = StartGame();
+		if (!_demo)
+			_hud.OfferTutorialOnce(_settings);
+		_hud.ApplyDevFlags();
 	}
 
 	// ---------------------------------------------------------------- World
 
-	private static Vector3 Dot(int row, int column) => new(column * Cell - GridHalf, 0, row * Cell - GridHalf);
+	private Vector3 Dot(int row, int column) => new(column * Cell - GridSpan / 2, 0, row * Cell - GridSpan / 2);
 
-	private static Vector3 LineCenter(int line)
+	private Vector3 LineCenter(int line)
 	{
-		if (DotsGame.IsHorizontal(line))
+		if (_game.IsHorizontal(line))
 		{
-			int row = line / DotsGame.Columns, column = line % DotsGame.Columns;
+			int row = line / _size, column = line % _size;
 			return (Dot(row, column) + Dot(row, column + 1)) / 2;
 		}
-		int index = line - DotsGame.Horizontal;
-		int r = index / (DotsGame.Columns + 1), c = index % (DotsGame.Columns + 1);
+		int index = line - _game.Horizontal;
+		int r = index / (_size + 1), c = index % (_size + 1);
 		return (Dot(r, c) + Dot(r + 1, c)) / 2;
 	}
 
-	private static Vector3 BoxCenter(int box) => (Dot(box / DotsGame.Columns, box % DotsGame.Columns) + Dot(box / DotsGame.Columns + 1, box % DotsGame.Columns + 1)) / 2;
+	private Vector3 BoxCenter(int box) => (Dot(box / _size, box % _size) + Dot(box / _size + 1, box % _size + 1)) / 2;
 
 	private void BuildWorld()
 	{
@@ -150,28 +166,39 @@ public partial class Main : Node3D
 		_rig = new Node3D();
 		AddChild(_rig);
 		_rig.RotateY(_initialSpin);
+		float half = GridSpan / 2 + 0.6f;
 		_slab = new MeshInstance3D
 		{
-			Mesh = new BoxMesh { Size = new Vector3(Half * 2, Thickness, Half * 2) },
+			Mesh = new BoxMesh { Size = new Vector3(half * 2, Thickness, half * 2) },
 			Position = new Vector3(0, -Thickness / 2, 0),
 			MaterialOverride = Materials.For(Styles.BoardLook(_settings.Board)),
 		};
 		_rig.AddChild(_slab);
-
-		// Brass pegs at every dot.
-		var peg = new CylinderMesh { TopRadius = 0.09f, BottomRadius = 0.11f, Height = 0.3f, RadialSegments = 16 };
-		var brass = Materials.For(Styles.Pieces(Style.Metal).One);
-		for (int row = 0; row <= DotsGame.Rows; row++)
-		{
-			for (int column = 0; column <= DotsGame.Columns; column++)
-				_rig.AddChild(new MeshInstance3D { Mesh = peg, MaterialOverride = brass, Position = Dot(row, column) + new Vector3(0, 0.15f, 0) });
-		}
 		Stage.WarmUp(this, -Thickness, Sparkle.Halo);
+	}
+
+	/// <summary>Brass pegs at every dot of the current grid.</summary>
+	private void BuildPegs()
+	{
+		foreach (var peg in _pegs)
+			peg.QueueFree();
+		_pegs.Clear();
+		var mesh = new CylinderMesh { TopRadius = 0.09f, BottomRadius = 0.11f, Height = 0.3f, RadialSegments = 16 };
+		var brass = Materials.For(Styles.Pieces(Style.Metal).One);
+		for (int row = 0; row <= _size; row++)
+		{
+			for (int column = 0; column <= _size; column++)
+			{
+				var peg = new MeshInstance3D { Mesh = mesh, MaterialOverride = brass, Position = Dot(row, column) + new Vector3(0, 0.15f, 0) };
+				_rig.AddChild(peg);
+				_pegs.Add(peg);
+			}
+		}
 	}
 
 	private MeshInstance3D MakeStick(int line, Player drawer)
 	{
-		bool across = DotsGame.IsHorizontal(line);
+		bool across = _game.IsHorizontal(line);
 		// Chunky enough to read at a glance on a phone.
 		var size = across ? new Vector3(Cell - 0.22f, 0.13f, 0.17f) : new Vector3(0.17f, 0.13f, Cell - 0.22f);
 		var stick = new MeshInstance3D
@@ -218,7 +245,7 @@ public partial class Main : Node3D
 		local.Y = 0;
 		// The nearest open line, if the tap is close enough to it.
 		int best = -1;
-		float bestDistance = 0.55f;
+		float bestDistance = Cell * 0.37f;
 		foreach (int line in _game.OpenLines())
 		{
 			float distance = (LineCenter(line) - local).Length();
@@ -259,7 +286,10 @@ public partial class Main : Node3D
 		{
 			_roundCounted = true;
 			if (_game.Winner is { } winner)
+			{
 				_wins.Win(first: winner == Player.First);
+				await SetWinnerAlight(winner, line);
+			}
 		}
 		_busy = false;
 		RefreshUi(result.GoesAgain ? result.Drawer : null);
@@ -285,7 +315,33 @@ public partial class Main : Node3D
 		_chain++;
 		_hud.SetStatus(_chain > 1 ? $"Box! ×{_chain}" : "Box!", Colours.UiColorOf(owner == Player.First));
 		await Wait(0.22f);
-		GetTree().CreateTimer(0.3).Timeout += () => tile.MaterialOverlay = null;
+		GetTree().CreateTimer(0.3).Timeout += () =>
+		{
+			if (IsInstanceValid(tile) && !_fires.Any())
+				tile.MaterialOverlay = null;
+		};
+	}
+
+	/// <summary>The winner's boxes catch fire, spreading out from the last line drawn.</summary>
+	private async Task SetWinnerAlight(Player winner, int lastLine)
+	{
+		var origin = LineCenter(lastLine);
+		var boxes = Enumerable.Range(0, _game.Boxes).Where(b => _game.Owner(b) == winner && _tiles[b] != null)
+			.OrderBy(b => (BoxCenter(b) - origin).Length()).ToList();
+		for (int i = 0; i < boxes.Count; i++)
+		{
+			var tile = _tiles[boxes[i]]!;
+			_fires.Add(Flames.SetAlight(_rig, tile.Position, new[] { tile }, radius: Cell * 0.3f, size: Mathf.Clamp(Cell / 1.5f, 0.6f, 1.2f), withLight: i == 0, particles: i < 12));
+			await Wait(0.08f);
+		}
+		await Wait(0.4f);
+	}
+
+	private void PutOutFire()
+	{
+		foreach (var fire in _fires)
+			fire.Extinguish();
+		_fires.Clear();
 	}
 
 	private void Clack(Vector3 at, float strength)
@@ -298,7 +354,7 @@ public partial class Main : Node3D
 	{
 		float dt = (float)delta;
 		_spin.Process(dt);
-		if (_busy || !IsComputerTurn)
+		if (_busy || !IsComputerTurn || _clip != null)
 			return;
 		if (!_computer.Thinking)
 		{
@@ -334,21 +390,67 @@ public partial class Main : Node3D
 		}
 	}
 
+	/// <summary>A new board size starts a new game at once if nothing's been played; otherwise from the next game.</summary>
+	private void ChooseSize(int size)
+	{
+		_settings.Extra["size"] = size.ToString();
+		_settings.Save();
+		if (_game.MovesMade == 0 || _game.IsOver)
+		{
+			_size = size;
+			_ = StartGame();
+		}
+		else
+		{
+			_pendingSize = size;
+			_hud.SetStatus($"{size}×{size} from the next game", Colors.White);
+		}
+	}
+
 	private async Task StartGame()
 	{
 		_computer.Cancel();
 		_busy = true;
 		_roundCounted = false;
 		_chain = 0;
-		_game.Reset();
-		Rebuild(animate: true);
+		PutOutFire();
+		if (_pendingSize is { } size)
+		{
+			_size = size;
+			_pendingSize = null;
+		}
+		ClearPieces(animate: true);
+		_game = new DotsGame(_size);
+		_sticks = new MeshInstance3D?[_game.Lines];
+		_tiles = new MeshInstance3D?[_game.Boxes];
+		BuildPegs();
 		await Wait(0.3f);
 		_busy = false;
 		RefreshUi();
 	}
 
-	/// <summary>Removes every stick and tile and puts back the ones the rules have (after undo or a colour change).</summary>
-	private void Rebuild(bool animate)
+	/// <summary>
+	/// Start over: free once the game is over or before anyone has moved; otherwise against the
+	/// computer it's a resignation (the computer gets the win) unless the player watches an ad.
+	/// </summary>
+	private void OnRestartPressed()
+	{
+		if (_busy)
+			return;
+		if (_game.IsOver || _game.MovesMade == 0)
+		{
+			_ = StartGame();
+			return;
+		}
+		_hud.AskRestart(VsComputer && !_demo, countLoss =>
+		{
+			if (countLoss)
+				_wins.Win(first: Human != Player.First);
+			_ = StartGame();
+		}, then => _ads.ShowRewarded(rewarded: then, closed: () => { }));
+	}
+
+	private void ClearPieces(bool animate)
 	{
 		foreach (var node in _sticks.Concat(_tiles))
 		{
@@ -365,11 +467,15 @@ public partial class Main : Node3D
 		}
 		System.Array.Clear(_sticks);
 		System.Array.Clear(_tiles);
-		// Line owners aren't kept by the rules, so replayed sticks take the colour of the box they
-		// closed, or stay neutral (the first colour) otherwise.
-		foreach (int line in Enumerable.Range(0, DotsGame.Lines).Where(_game.IsDrawn))
-			MakeStick(line, Player.First);
-		for (int box = 0; box < DotsGame.Boxes; box++)
+	}
+
+	/// <summary>Removes every stick and tile and puts back the ones the rules have (after undo or a colour change).</summary>
+	private void Rebuild(bool animate)
+	{
+		ClearPieces(animate);
+		foreach (int line in Enumerable.Range(0, _game.Lines).Where(_game.IsDrawn))
+			MakeStick(line, _game.DrewLine(line) ?? Player.First);
+		for (int box = 0; box < _game.Boxes; box++)
 		{
 			if (_game.Owner(box) is { } owner)
 				MakeTile(box, owner);
@@ -391,6 +497,7 @@ public partial class Main : Node3D
 	private void UndoLastTurn()
 	{
 		_computer.Cancel();
+		PutOutFire();
 		if (_game.IsOver && _roundCounted && _game.Winner is { } winner)
 			_wins.Unwin(first: winner == Player.First);
 		_roundCounted = false;
@@ -416,6 +523,7 @@ public partial class Main : Node3D
 		_hud.SetScore($"{NameOf(Player.First)}  {_game.Score(Player.First)}   —   {_game.Score(Player.Second)}  {NameOf(Player.Second)}");
 		_hud.SetNewGameVisible(_game.IsOver && !_busy);
 		_hud.SetUndoVisible(CanUndo);
+		_hud.SetRestartVisible(!_game.IsOver);
 		if (_game.IsOver)
 		{
 			if (_busy)
@@ -441,12 +549,68 @@ public partial class Main : Node3D
 
 	private SignalAwaiter Wait(float seconds) => ToSignal(GetTree().CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
 
+	// ---------------------------------------------------------------- Tutorial clips
+
+	/// <summary>
+	/// Plays one scripted scene for a tutorial video, with the HUD hidden. Recorded with
+	/// addons/renegade_core/tools/Record-Clips.ps1 (`-- --clip=name`).
+	/// </summary>
+	private async Task PlayClip(string clip)
+	{
+		_settings.Mode = GameMode.PlayerVsPlayer;
+		_settings.Muted = false;
+		_size = 3;
+		await StartGame();
+		await Wait(0.6f);
+		switch (clip)
+		{
+			case "draw":
+				foreach (var (row, column, across) in new[] { (0, 0, true), (2, 1, false), (3, 2, true), (1, 3, false), (1, 1, true) })
+				{
+					await PlayLine(across ? _game.HorizontalLine(row, column) : _game.VerticalLine(row, column));
+					await Wait(0.6f);
+				}
+				await Wait(0.6f);
+				break;
+			case "box":
+				// Three sides of a corner box, then a chain of two along the top.
+				foreach (int line in new[] { _game.HorizontalLine(0, 0), _game.VerticalLine(0, 0), _game.HorizontalLine(1, 0), _game.HorizontalLine(0, 1), _game.HorizontalLine(1, 1) })
+				{
+					await PlayLine(line);
+					await Wait(0.45f);
+				}
+				await Wait(0.5f);
+				await PlayLine(_game.VerticalLine(0, 1));
+				await Wait(0.5f);
+				await PlayLine(_game.VerticalLine(0, 2));
+				await Wait(1.4f);
+				break;
+			case "end":
+			{
+				// Most of a game played quickly off camera, then the last lines and the winner's fire.
+				var computer = new ComputerPlayer(Difficulty.Medium, seed: 3);
+				while (_game.OpenLines().Count() > 4)
+					_game.Draw(computer.ChooseLine(_game));
+				Rebuild(animate: false);
+				await Wait(0.8f);
+				while (!_game.IsOver)
+				{
+					await PlayLine(computer.ChooseLine(_game));
+					await Wait(0.35f);
+				}
+				await Wait(2.6f);
+				break;
+			}
+		}
+		GetTree().Quit();
+	}
+
 	// ---------------------------------------------------------------- Developer flags
 
 	/// <summary>
 	/// Developer flags after `--` (or in user://dev_args.txt on a phone): `--log`, `--demo` (the
 	/// computer plays both sides), `--quit-after-demo`, `--games-since-ad=4`, `--board=Wood`,
-	/// `--pieces=Glass`, `--spin=30` (degrees). Style flags aren't saved.
+	/// `--pieces=Glass`, `--size=5`, `--spin=30` (degrees), `--clip=name`. Style flags aren't saved.
 	/// </summary>
 	private void ReadDeveloperArgs()
 	{
@@ -473,8 +637,14 @@ public partial class Main : Node3D
 				case "--pieces" when System.Enum.TryParse(value, out Style pieces):
 					_settings.Pieces = pieces;
 					break;
+				case "--size" when int.TryParse(value, out int size) && Sizes.Contains(size):
+					_size = size;
+					break;
 				case "--spin":
 					_initialSpin = Mathf.DegToRad(float.Parse(value, System.Globalization.CultureInfo.InvariantCulture));
+					break;
+				case "--clip":
+					_clip = value;
 					break;
 			}
 		}

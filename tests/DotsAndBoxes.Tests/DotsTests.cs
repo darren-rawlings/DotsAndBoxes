@@ -10,20 +10,21 @@ public class DotsTests
 	[Fact]
 	public void TheGridHasSixtyLinesAndEachBoxFourSides()
 	{
-		Assert.Equal(60, DotsGame.Lines);
-		Assert.All(DotsGame.BoxEdges, edges => Assert.Equal(4, System.Numerics.BitOperations.PopCount(edges)));
-		Assert.All(Enumerable.Range(0, DotsGame.Lines), line => Assert.InRange(DotsGame.LineBoxes[line].Length, 1, 2));
+		var game = new DotsGame();
+		Assert.Equal(60, game.Lines);
+		Assert.All(game.BoxEdges, edges => Assert.Equal(4, (int)System.UInt128.PopCount(edges)));
+		Assert.All(Enumerable.Range(0, game.Lines), line => Assert.InRange(game.LineBoxes[line].Length, 1, 2));
 	}
 
 	[Fact]
 	public void ClosingABoxScoresAndGoesAgain()
 	{
 		var game = new DotsGame();
-		game.Draw(DotsGame.HorizontalLine(0, 0));
-		game.Draw(DotsGame.HorizontalLine(1, 0));
-		game.Draw(DotsGame.VerticalLine(0, 0));
+		game.Draw(game.HorizontalLine(0, 0));
+		game.Draw(game.HorizontalLine(1, 0));
+		game.Draw(game.VerticalLine(0, 0));
 		Assert.Equal(Player.Second, game.Turn);
-		var result = game.Draw(DotsGame.VerticalLine(0, 1));
+		var result = game.Draw(game.VerticalLine(0, 1));
 		Assert.Equal(new[] { 0 }, result.Boxes);
 		Assert.True(result.GoesAgain);
 		Assert.Equal(Player.Second, game.Turn);
@@ -35,10 +36,10 @@ public class DotsTests
 	public void OneLineCanCloseTwoBoxes()
 	{
 		var game = new DotsGame();
-		foreach (int line in new[] { DotsGame.HorizontalLine(0, 0), DotsGame.HorizontalLine(1, 0), DotsGame.VerticalLine(0, 0),
-			DotsGame.HorizontalLine(0, 1), DotsGame.HorizontalLine(1, 1), DotsGame.VerticalLine(0, 2) })
+		foreach (int line in new[] { game.HorizontalLine(0, 0), game.HorizontalLine(1, 0), game.VerticalLine(0, 0),
+			game.HorizontalLine(0, 1), game.HorizontalLine(1, 1), game.VerticalLine(0, 2) })
 			game.Draw(line);
-		var result = game.Draw(DotsGame.VerticalLine(0, 1));
+		var result = game.Draw(game.VerticalLine(0, 1));
 		Assert.Equal(2, result.Boxes.Count);
 	}
 
@@ -46,7 +47,7 @@ public class DotsTests
 	public void UndoGivesTheBoxBack()
 	{
 		var game = new DotsGame();
-		foreach (int line in new[] { DotsGame.HorizontalLine(0, 0), DotsGame.HorizontalLine(1, 0), DotsGame.VerticalLine(0, 0), DotsGame.VerticalLine(0, 1) })
+		foreach (int line in new[] { game.HorizontalLine(0, 0), game.HorizontalLine(1, 0), game.VerticalLine(0, 0), game.VerticalLine(0, 1) })
 			game.Draw(line);
 		Assert.True(game.Undo());
 		Assert.Null(game.Owner(0));
@@ -60,7 +61,7 @@ public class DotsTests
 		var computer = new ComputerPlayer(Difficulty.Medium, seed: 1);
 		while (!game.IsOver)
 			game.Draw(computer.ChooseLine(game));
-		Assert.Equal(DotsGame.Boxes, game.Score(Player.First) + game.Score(Player.Second));
+		Assert.Equal(game.Boxes, game.Score(Player.First) + game.Score(Player.Second));
 	}
 
 	[Fact]
