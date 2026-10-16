@@ -172,7 +172,8 @@ public partial class Main : Node3D
 	private MeshInstance3D MakeStick(int line, Player drawer)
 	{
 		bool across = DotsGame.IsHorizontal(line);
-		var size = across ? new Vector3(Cell - 0.22f, 0.09f, 0.1f) : new Vector3(0.1f, 0.09f, Cell - 0.22f);
+		// Chunky enough to read at a glance on a phone.
+		var size = across ? new Vector3(Cell - 0.22f, 0.13f, 0.17f) : new Vector3(0.17f, 0.13f, Cell - 0.22f);
 		var stick = new MeshInstance3D
 		{
 			Mesh = new BoxMesh { Size = size },
