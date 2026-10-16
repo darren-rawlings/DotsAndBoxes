@@ -1,19 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 432 432">
   <defs>
-    <radialGradient id="bg" cx="216" cy="250" r="260" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ff7a1a"/>
-      <stop offset="0.22" stop-color="#9a2008"/>
-      <stop offset="0.55" stop-color="#2e0d08"/>
-      <stop offset="1" stop-color="#140806"/>
+    <radialGradient id="bg" cx="216" cy="200" r="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b07444"/>
+      <stop offset="0.55" stop-color="#7a4a26"/>
+      <stop offset="1" stop-color="#3a2010"/>
     </radialGradient>
   </defs>
   <rect width="432" height="432" fill="url(#bg)"/>
-  <g fill="#ffc24d">
-    <circle cx="92" cy="120" r="3" opacity="0.7"/>
-    <circle cx="338" cy="96" r="2.5" opacity="0.6"/>
-    <circle cx="356" cy="168" r="3.5" opacity="0.5"/>
-    <circle cx="70" cy="214" r="2.5" opacity="0.5"/>
-    <circle cx="120" cy="70" r="2" opacity="0.6"/>
-    <circle cx="312" cy="54" r="2" opacity="0.5"/>
+  <!-- The board's grid, faint. -->
+  <g stroke="#2a160a" stroke-opacity="0.45" stroke-width="4">
+    <path d="M0 108 H432 M0 216 H432 M0 324 H432 M108 0 V432 M216 0 V432 M324 0 V432"/>
   </g>
 </svg>

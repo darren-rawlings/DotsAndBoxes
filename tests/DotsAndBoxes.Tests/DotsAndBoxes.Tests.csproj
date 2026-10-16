@@ -7,6 +7,8 @@
   <ItemGroup>
     <!-- Test the Godot-free rules code directly, without loading the engine. -->
     <Compile Include="../../src/Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- The shared library's engine-free code (Difficulty, Scoreboard, AdSchedule...). -->
+    <Compile Include="../../addons/renegade_core/pure/**/*.cs" Link="Shared/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
