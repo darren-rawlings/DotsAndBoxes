@@ -31,7 +31,7 @@ project/assembly_name="DotsAndBoxes"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/admob/plugin.cfg")
+enabled=PackedStringArray("res://addons/admob/plugin.cfg", "res://addons/GodotGooglePlayBilling/plugin.cfg")
 
 [physics]
 

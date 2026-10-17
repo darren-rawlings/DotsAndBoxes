@@ -125,6 +125,8 @@ public partial class Main : Node3D
 		};
 
 		_spin = new SpinControl(_rig, () => !_busy && !_settings.FreezeBoard);
+		// Freeze the board also turns it back to where it started.
+		_spin.Frozen = () => _settings.FreezeBoard && !_busy;
 		_spin.Tapped += OnTapped;
 		if (_clip != null)
 		{

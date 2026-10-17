@@ -6,6 +6,7 @@
 bin/
 # ...but not the AdMob plugin's Android libraries: without them a fresh clone builds with no ads.
 !addons/admob/android/bin/
+!addons/GodotGooglePlayBilling/bin/
 obj/
 *.user
 
