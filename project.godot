@@ -8,6 +8,10 @@
 
 config_version=5
 
+[admob]
+
+general/android/app_id="ca-app-pub-3310172999423635~5361472962"
+
 [application]
 
 config/name="Dots and Boxes"
